@@ -1,0 +1,1775 @@
+# Rinda — Complete Documentation
+
+> Rinda is a managed Queue-as-a-Service platform that wraps cloud queue services
+> (AWS SQS, Azure Service Bus) and provides an easy-to-use SDK, REST API, and web dashboard.
+> No cloud credentials or infrastructure knowledge required.
+
+---
+
+# Quickstart
+
+Get up and running with Rinda in under 5 minutes. By the end of this guide you'll have created a queue, sent a message, and received it.
+
+## Prerequisites
+
+- A [Rinda account](https://app.rinda.dev) (free tier available)
+- An API key (create one in **Settings > API Keys**)
+
+## 1. Install the SDK
+
+```bash
+npm install @rindahq/sdk
+```
+
+ Looking for another language?
+We currently offer an official SDK for Node.js/TypeScript. For Python, PHP, C#, Go, and other languages, use the [REST API](/docs/api-reference/rinda-api) directly with any HTTP client — it works with any language that can make HTTP requests.
+
+
+## 2. Create a Queue
+
+
+  ### Node.js SDK
+
+```typescript
+
+const rinda = new Rinda({
+  apiKey: 'rk_prod_your_api_key',
+});
+
+const queue = await rinda.queues.create({
+  name: 'order-events',
+  region: 'us-east-1',
+});
+
+console.log('Queue created:', queue.id);
+```
+
+  
+  ### REST API
+
+```bash
+curl -X POST https://api.rinda.dev/v1/queues \
+  -H "Authorization: Bearer rk_prod_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "order-events", "region": "us-east-1"}'
+```
+
+  
+
+
+## 3. Send a Message
+
+
+  ### Node.js SDK
+
+```typescript
+const q = rinda.queue(queue.id);
+
+const { messageId } = await q.send({
+  body: { orderId: '123', status: 'confirmed' },
+});
+
+console.log('Message sent:', messageId);
+```
+
+  
+  ### REST API
+
+```bash
+curl -X POST https://api.rinda.dev/v1/queues/QUEUE_ID/messages \
+  -H "Authorization: Bearer rk_prod_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"body": {"orderId": "123", "status": "confirmed"}}'
+```
+
+  
+
+
+## 4. Receive Messages
+
+
+  ### Node.js SDK
+
+```typescript
+const messages = await q.receive({
+  maxMessages: 10,
+  waitTimeSeconds: 20, // Long-polling
+});
+
+for (const msg of messages) {
+  console.log('Received:', msg.body);
+  await msg.delete(); // Acknowledge the message
+}
+```
+
+  
+  ### REST API
+
+```bash
+# Receive messages (long-poll for 20 seconds)
+curl "https://api.rinda.dev/v1/queues/QUEUE_ID/messages?maxMessages=10&waitTimeSeconds=20" \
+  -H "Authorization: Bearer rk_prod_your_api_key"
+
+# Delete (acknowledge) a message
+curl -X DELETE "https://api.rinda.dev/v1/queues/QUEUE_ID/messages/MESSAGE_ID" \
+  -H "Authorization: Bearer rk_prod_your_api_key"
+```
+
+  
+
+
+## 5. Use Workers (SDK)
+
+The SDK includes a `QueueWorker` that automatically polls for messages with retry logic and graceful shutdown:
+
+```typescript
+
+const rinda = new Rinda({ apiKey: 'rk_prod_your_api_key' });
+const q = rinda.queue('QUEUE_ID');
+
+const worker = q.createWorker({
+  handler: async (message) => {
+    console.log('Processing:', message.body);
+    // Your processing logic here
+    return message; // Acknowledge — message is auto-deleted
+  },
+  batchSize: 5,
+  waitTimeSeconds: 20,
+});
+
+worker.start();
+
+// Graceful shutdown
+process.on('SIGTERM', () => worker.stop());
+```
+
+## Next Steps
+
+- [Authentication](/docs/getting-started/authentication) — Learn about API keys and scoping
+- [Core Concepts](/docs/getting-started/concepts) — Understand projects, environments, and queues
+- [Queues Guide](/docs/guides/queues) — Deep dive into queue configuration
+- [FIFO Queues](/docs/guides/fifo-queues) — Strict ordering and exactly-once delivery
+- [Message Storage](/docs/guides/storage) — large message bodies, and the archive of what you sent
+- [API Reference](/docs/api-reference/rinda-api) — Full API documentation with code examples
+
+---
+
+# Authentication
+
+All Rinda API requests require authentication via an API key passed as a Bearer token.
+
+## API Keys
+
+API keys are prefixed with `rk_` followed by the environment identifier:
+
+| Prefix | Environment |
+|--------|-------------|
+| `rk_prod_...` | Production |
+| `rk_stg_...` | Staging |
+| `rk_dev_...` | Development |
+
+### Creating an API Key
+
+1. Log in to the [Rinda Dashboard](https://app.rinda.dev)
+2. Navigate to **Settings > API Keys**
+3. Click **Create API Key**
+4. Give it a descriptive name (e.g., "backend-service")
+5. Copy the key — it is only shown once
+
+### Using Your API Key
+
+
+  ### Node.js SDK
+
+```typescript
+
+const rinda = new Rinda({
+  apiKey: process.env.RINDA_API_KEY, // rk_prod_...
+});
+```
+
+  
+  ### REST API
+
+```bash
+curl https://api.rinda.dev/v1/queues \
+  -H "Authorization: Bearer $RINDA_API_KEY"
+```
+
+Works with any HTTP client in any language — just set the `Authorization: Bearer <key>` header.
+
+  
+
+
+## Environment scoping
+
+Each API key belongs to one **project** and one **environment**. A production
+key cannot reach staging queues, or the other way round.
+
+## Permissions
+
+By default a key can do anything its plan allows. On a paid plan you can narrow
+that when creating the key:
+
+| Preset | What it can do |
+|---|---|
+| **Full access** | Everything |
+| **Read only** | Receive messages, list and inspect queues |
+| **Write only** | Send messages, create and configure queues |
+| **Custom** | Any combination of the individual permissions |
+
+The individual permissions are `queues:read`, `queues:write`, `messages:read`,
+and `messages:write`. A request outside a key's permissions is refused with
+`403` and a body naming the permission that was missing:
+
+```json
+{
+  "error": {
+    "code": "insufficient_scope",
+    "message": "This API key cannot perform this action.",
+    "required": "messages:write",
+    "granted": ["messages:read", "queues:read"]
+  }
+}
+```
+
+A key issued before permissions existed has none recorded and keeps full
+access, so nothing breaks on upgrade.
+
+## Expiry
+
+On a paid plan a key can be given an expiry — 30, 90, or 365 days. After that
+it stops authenticating. A key with no expiry never lapses.
+
+## Rotating a key without downtime
+
+Rotation issues a replacement and keeps the old key working for an overlap
+window, so there is no moment when neither key is valid:
+
+```bash
+curl -X POST https://api.rinda.dev/v1/api-keys/{keyId}/rotate \
+  -H "Authorization: Bearer $RINDA_SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{"overlapHours": 24}'
+```
+
+```json
+{
+  "key": "rk_prod_the_new_key_shown_once",
+  "name": "Production Key",
+  "replaced": { "prefix": "rk_prod_a1b2c3", "expiresAt": "2026-08-26T12:00:00Z" }
+}
+```
+
+The replacement carries the same permissions, environment, and expiry policy.
+The sequence is:
+
+1. Rotate. Both keys work.
+2. Deploy the new key.
+3. The old key expires at the end of the overlap — no action needed.
+
+Both keys count against your plan's per-environment key limit during the
+overlap, so rotation needs a free slot. The Free tier allows one key per
+environment and therefore cannot rotate without a gap; paid plans allow three
+or more.
+
+Rotation is not the same as revoking. **Revoking** cuts a key off immediately —
+right for a leaked key, wrong for a planned replacement.
+
+## Security practices
+
+- **Never commit keys.** Use environment variables.
+- **Give each service its own key**, so one can be revoked without affecting
+  the others.
+- **Narrow the permissions.** A service that only consumes needs `messages:read`.
+- **Rotate on a schedule** using the overlap above, rather than revoking and
+  scrambling to redeploy.
+- **Use environment-specific keys.** Never a production key in development.
+
+## Error Responses
+
+If authentication fails, the API returns a `401 Unauthorized` response:
+
+```json
+{
+  "statusCode": 401,
+  "message": "Unauthorized",
+  "error": "Invalid or missing API key"
+}
+```
+
+---
+
+# Core Concepts
+
+This page explains the key building blocks of Rinda and how they relate to each other.
+
+## Architecture Overview
+
+```
+Account
+  └── Project
+       └── Environment (dev / staging / production)
+            ├── Queues
+            │    └── Messages
+            └── Storage Objects
+```
+
+## Account
+
+Your Rinda account is the top-level container. Each account has:
+
+- A **billing subscription** (Free, Scale, or Dedicated)
+- One or more **projects**
+- **Per-account encryption** — every account gets its own encryption key
+
+## Projects
+
+A project groups related queues and storage objects together. Think of it as a workspace for a single application or microservice.
+
+- Each project has its own set of **environments**
+- Queues and storage are isolated per project
+
+## Environments
+
+Each project comes with three environments out of the box:
+
+| Environment | Purpose |
+|---|---|
+| **Development** | Local development and testing |
+| **Staging** | Pre-production validation |
+| **Production** | Live traffic |
+
+API keys are scoped to an environment, so your dev code can never accidentally write to production queues.
+
+## Queues
+
+A queue is a message channel. Rinda supports two types:
+
+### Standard Queues
+- **Best-effort ordering** — messages are generally delivered in order, but not guaranteed
+- **At-least-once delivery** — messages may be delivered more than once
+- **Higher throughput** — no ordering constraints
+
+### FIFO Queues
+- **Strict ordering** — messages are delivered in the exact order they were sent
+- **Exactly-once processing** — message deduplication prevents duplicates
+- **Message groups** — independent ordering within groups
+
+## Messages
+
+Messages are the data you send through queues. Key properties:
+
+| Property | Description |
+|---|---|
+| **body** | Any JSON payload (up to 190 KB inline, 1 MB stored) |
+| **delaySeconds** | Delay before the message becomes visible (0-900s) |
+| **visibilityTimeout** | Time a message stays invisible after being received |
+| **groupId** | Message group for FIFO ordering |
+| **deduplicationId** | Prevents duplicate messages in FIFO queues |
+
+### Message Lifecycle
+
+```
+Sent → Pending → Received (invisible) → Deleted (acknowledged)
+                      │
+                      └→ Visible again (if not deleted within visibility timeout)
+                              │
+                              └→ Dead Letter Queue (after max retries)
+```
+
+### Large Messages
+
+Messages over 190 KB are automatically stored in Rinda Storage and a reference pointer is sent through the queue. This is transparent — you always receive the full message body.
+
+## Message Storage
+
+Rinda keeps message bodies so that:
+
+- **Large payloads** can be sent at all — a body over the queue's limit is
+  stored, and a reference travels on the queue
+- **Messages can be inspected** long after they were processed
+- **Messages can be replayed**, using the body exactly as it was sent
+
+How long they are kept is set per account. See
+[Message Storage](/docs/guides/storage).
+
+## Dead Letter Queues (DLQ)
+
+When a message fails to be processed after a configurable number of attempts, it is automatically moved to a dead-letter queue for investigation. DLQ can be enabled per queue with a single toggle.
+
+## Next Steps
+
+- [Quickstart](/docs/getting-started/quickstart) — Send your first message
+- [Queues Guide](/docs/guides/queues) — Deep dive into queue configuration
+- [API Reference](/docs/api-reference/rinda-api) — Full API documentation
+
+---
+
+# Queues
+
+Queues are the core building block of Rinda. A queue holds messages until they are consumed by your application.
+
+## Creating a Queue
+
+
+  ### Node.js SDK
+
+```typescript
+
+const rinda = new Rinda({ apiKey: 'rk_prod_your_api_key' });
+
+const queue = await rinda.queues.create({
+  name: 'order-events',
+  region: 'us-east-1',
+});
+
+console.log('Queue created:', queue.id, queue.name);
+```
+
+  
+  ### REST API
+
+```bash
+curl -X POST https://api.rinda.dev/v1/queues \
+  -H "Authorization: Bearer $RINDA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "order-events",
+    "region": "us-east-1"
+  }'
+```
+
+  
+
+
+## Queue Types
+
+### Standard Queues
+
+Best for high-throughput workloads where strict ordering is not required:
+
+- Messages delivered at least once
+- Best-effort ordering
+- Nearly unlimited throughput
+
+### FIFO Queues
+
+Best for workflows that require strict message ordering:
+
+- Messages delivered in exact order
+- Exactly-once processing via deduplication
+- Message groups for parallel ordered processing
+
+```typescript
+const fifoQueue = await rinda.queues.create({
+  name: 'payment-events',
+  region: 'us-east-1',
+  isFifo: true,
+  dlqEnabled: true,
+  maxReceiveCount: 3,
+});
+```
+
+See the [FIFO Queues Guide](/docs/guides/fifo-queues) for details.
+
+## Configuration Options
+
+| Option | Default | Description |
+|---|---|---|
+| `name` | *required* | Unique name within the project |
+| `region` | *required* | Region the queue runs in (`us-east-1`, `eu-west-1`, etc.) |
+| `isFifo` | `false` | Create a FIFO queue for strict ordering |
+| `encrypted` | `true` | Enable server-side encryption |
+| `dlqEnabled` | `false` | Enable dead-letter queue |
+| `maxReceiveCount` | `5` | Max delivery attempts before sending to DLQ |
+| `visibilityTimeoutSecs` | `30` | Seconds a message stays invisible after being received |
+| `messageRetentionDays` | `4` | Days to retain unprocessed messages |
+| `delaySeconds` | `0` | Default delay for messages in this queue |
+
+## Listing Queues
+
+```typescript
+const queues = await rinda.queues.list();
+for (const q of queues) {
+  console.log(`${q.name} (${q.isFifo ? 'FIFO' : 'standard'}) — ${q.region}`);
+}
+```
+
+## Getting a Queue
+
+```typescript
+const queue = await rinda.queues.get('QUEUE_ID');
+console.log(queue.name, queue.isFifo, queue.region);
+```
+
+## Queue Statistics
+
+```typescript
+const q = rinda.queue('QUEUE_ID');
+
+const stats = await q.stats();
+console.log('Messages available:', stats.approximateMessageCount);
+console.log('Messages in flight:', stats.approximateNotVisible);
+console.log('Messages delayed:', stats.approximateDelayed);
+```
+
+## Deleting a Queue
+
+
+Deleting a queue permanently removes all its messages. This action cannot be undone.
+
+
+```typescript
+await rinda.queues.delete('QUEUE_ID');
+```
+
+## Regions
+
+| Region | Location |
+|---|---|
+| `us-east-1` | N. Virginia |
+| `us-west-2` | Oregon |
+| `eu-west-1` | Ireland |
+| `eu-central-1` | Frankfurt |
+| `ap-southeast-1` | Singapore |
+
+## Backlog alerts
+
+A queue filling faster than it drains is invisible until something downstream
+breaks, and by then the backlog is hours old. Set a threshold and the account
+owners are emailed when it is crossed:
+
+```typescript
+await rinda.queues.update('QUEUE_ID', { depthAlertThreshold: 1000 });
+```
+
+Or from the queue's **Settings** page in the dashboard.
+
+The count includes messages being retried, not just ones waiting to be picked
+up — a queue whose consumer keeps failing has everything in flight, and
+counting only what is visible would call it empty.
+
+### One email per backlog
+
+You get one email when the queue crosses the threshold, and no more until it
+drops back under and rises again. An alert that repeats every fifteen minutes
+until someone fixes it is one people build a mail filter for, and then the
+next one goes unread too.
+
+Recovery is not emailed either. A queue draining is the expected outcome, and
+mail nobody has to act on trains people to ignore the mail they do.
+
+### Turning it off
+
+```typescript
+await rinda.queues.update('QUEUE_ID', { depthAlertThreshold: null });
+```
+
+There is no default threshold. What counts as backed up depends entirely on
+the queue — ten messages is an emergency on one that is normally empty and
+unremarkable on one that batches overnight — so nothing is watched until you
+say what to watch for.
+
+---
+
+# Messages
+
+Messages are the data you push through Rinda queues. This guide covers all message operations.
+
+## Sending Messages
+
+### Single Message
+
+
+  ### Node.js SDK
+
+```typescript
+const q = rinda.queue('QUEUE_ID');
+
+const { messageId } = await q.send({
+  body: { orderId: '123', action: 'process' },
+});
+
+console.log('Message ID:', messageId);
+```
+
+  
+  ### REST API
+
+```bash
+curl -X POST "https://api.rinda.dev/v1/queues/QUEUE_ID/messages" \
+  -H "Authorization: Bearer $RINDA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"body": {"orderId": "123", "action": "process"}}'
+```
+
+  
+
+
+### Batch Send (up to 10)
+
+```typescript
+const result = await q.sendBatch([
+  { body: { orderId: '1' } },
+  { body: { orderId: '2' } },
+  { body: { orderId: '3' } },
+]);
+
+console.log('Sent:', result.messageIds); // ['msg-id-1', 'msg-id-2', 'msg-id-3']
+```
+
+### Delayed Messages
+
+```typescript
+await q.send({
+  body: { reminder: 'Follow up in 5 minutes' },
+  delaySeconds: 300, // Message becomes visible after 5 minutes
+});
+```
+
+### Message Attributes
+
+Attach custom metadata to messages:
+
+```typescript
+await q.send({
+  body: { orderId: '123' },
+  attributes: {
+    source: 'checkout-service',
+    priority: 'high',
+  },
+});
+```
+
+## Receiving Messages
+
+### Basic Receive
+
+
+  ### Node.js SDK
+
+```typescript
+const messages = await q.receive({
+  maxMessages: 10,       // Receive up to 10 messages
+  waitTimeSeconds: 20,   // Long-poll for up to 20 seconds (the default)
+});
+```
+
+  
+  ### REST API
+
+```bash
+curl "https://api.rinda.dev/v1/queues/QUEUE_ID/messages?maxMessages=10&waitTimeSeconds=20" \
+  -H "Authorization: Bearer $RINDA_API_KEY"
+```
+
+  
+
+
+### Long Polling
+
+Receiving long-polls by default: with no `waitTimeSeconds`, the call waits up
+to **20 seconds** for a message to arrive and returns as soon as one does.
+This is what you want almost always — a consumer that short-polls spends most
+of its requests being told there is nothing, and each of those round trips
+costs latency for work it did not do.
+
+```typescript
+// Both wait up to 20 seconds.
+const messages = await q.receive();
+const same = await q.receive({ waitTimeSeconds: 20 });
+```
+
+Twenty seconds is the maximum; anything higher is clamped to it.
+
+Pass `0` when you want the opposite — an answer now, empty or not. That suits
+draining a queue in a loop, or a health check that must not block:
+
+```typescript
+const messages = await q.receive({ waitTimeSeconds: 0 });
+```
+
+
+The AWS SDK compatibility endpoint keeps SQS's default of `0` rather than this
+one, because it emulates SQS rather than replacing it.
+
+
+### Processing and Acknowledging
+
+After processing a message, delete it to acknowledge receipt:
+
+```typescript
+for (const msg of messages) {
+  try {
+    await processOrder(msg.body);
+    await msg.delete(); // Acknowledge
+  } catch (error) {
+    // Don't delete — message becomes visible again after timeout
+    console.error('Processing failed:', error);
+  }
+}
+```
+
+Each received message includes useful metadata:
+
+```typescript
+for (const msg of messages) {
+  console.log('ID:', msg.id);
+  console.log('Body:', msg.body);
+  console.log('Receive count:', msg.approximateReceiveCount);
+  console.log('Received at:', msg.receivedAt);
+}
+```
+
+## Deleting Messages
+
+### By Message ID
+
+Delete a message by its ID, without needing the receipt handle from a receive:
+
+```typescript
+await q.remove('MESSAGE_ID');
+```
+
+## Large Messages
+
+Messages up to **190 KB** travel on the queue itself. Larger bodies, up to
+**1 MB**, are stored by Rinda and a reference travels on the queue instead.
+
+The queue engine underneath caps a message at 256 KB counting its attributes,
+and a stored body is encrypted before it is written — which costs a little
+more than the body itself. 190 KB is the largest payload that fits inside
+both of those with room to spare, so the limit does not move underneath you.
+
+This is fully transparent: send and receive look the same at any size, and
+ordering, deduplication, delivery counts, and dead-letter behaviour are
+unaffected.
+
+```typescript
+const q = rinda.queue('QUEUE_ID');
+
+// Send a payload larger than 190 KB — stored, with a reference on the queue
+const largePayload = { data: 'x'.repeat(300 * 1024), type: 'report' };
+const { messageId } = await q.send({ body: largePayload });
+
+// Receive — the full body comes back, not a reference
+const messages = await q.receive({ maxMessages: 1, waitTimeSeconds: 5 });
+console.log(messages[0].body.type); // 'report'
+console.log(messages[0].body.data.length); // 307200
+await messages[0].delete();
+```
+
+## Visibility Timeout
+
+When a message is received, it becomes invisible to other consumers for the visibility timeout period. If the message is not deleted within this time, it becomes visible again for reprocessing.
+
+## Error Handling
+
+```typescript
+
+try {
+  await q.send({ body: { orderId: '123' } });
+} catch (error) {
+  if (error instanceof RindaApiError) {
+    console.error('API error:', error.message);
+    console.error('Status:', error.statusCode);
+    console.error('Request ID:', error.requestId);
+  }
+}
+```
+
+---
+
+# Message Storage
+
+Rinda stores message bodies that are too large to travel on the queue itself,
+and keeps an archive of the messages you send so you can inspect and replay
+them later.
+
+It is not a general-purpose file store. Nothing uploads to it directly — Rinda
+writes to it on your behalf when you send a message.
+
+## Large messages
+
+A queue caps a message body at 190 KB. Send something larger and Rinda stores
+the body and puts a reference on the queue; on receive it swaps the reference
+back for your payload. Your code does not change:
+
+```typescript
+// 400 KB — over the queue limit, and it just works.
+await rinda.queue('orders').send({ body: { report: bigJsonBlob } });
+
+const [message] = await rinda.queue('orders').receive();
+console.log(message.body.report); // the full payload, not a reference
+```
+
+A single body is capped at 1 MB. Past that the send is rejected rather than
+stored — at that size you want your own storage and a reference in the message,
+rather than a queue carrying the payload.
+
+Nothing else about the message changes: ordering, deduplication, delivery
+counts, and dead-letter behaviour work the same whether the body travelled on
+the queue or beside it.
+
+## Inspecting and replaying
+
+Every message you send is recorded, so you can look at what was actually sent
+long after it was processed — including bodies that were too large for the
+queue. Find them under **Storage** in the dashboard, or on a queue's
+**Messages** tab.
+
+How much Rinda keeps depends on the queue's persistence setting:
+
+| Setting | What is kept |
+|---|---|
+| `NONE` | Only bodies too large to send inline — those must be stored to be sent at all |
+| `LARGE_ONLY` *(default)* | Large bodies, plus a short preview of every other message |
+| `ALL` | Every message body in full |
+
+## Retention
+
+Archived bodies are kept for a window set per account:
+
+| Plan | Window |
+|---|---|
+| Free | 7 days, fixed |
+| Scale and Dedicated | 7, 15, 30, or 60 days |
+
+Change it under **Settings → Retention**. Expiry is asynchronous, so the
+guarantee is "kept for **at least** the window", not "deleted the instant it
+elapses".
+
+Shortening the window deletes anything already past it, and downgrading a plan
+narrows the window to what the new plan allows — that data does not come back
+by upgrading again.
+
+---
+
+# Workers
+
+The `QueueWorker` class in the Rinda SDK provides a reliable, production-ready message consumer with automatic polling, error handling, and graceful shutdown.
+
+## Creating a Worker
+
+Create a worker from a queue handle:
+
+```typescript
+
+const rinda = new Rinda({ apiKey: process.env.RINDA_API_KEY });
+const q = rinda.queue('QUEUE_ID');
+
+const worker = q.createWorker({
+  handler: async (message) => {
+    console.log('Processing:', message.body);
+    // Your processing logic here
+    return message; // Acknowledge — message is auto-deleted
+  },
+});
+
+worker.start();
+console.log('Worker running:', worker.isRunning); // true
+```
+
+## Configuration Options
+
+```typescript
+const worker = q.createWorker({
+  handler: async (message) => {
+    await processOrder(message.body);
+    return message;
+  },
+  batchSize: 5,            // Messages per poll (1-10, default: 1)
+  visibilityTimeout: 60,   // Seconds before message reappears (default: 30)
+  waitTimeSeconds: 20,     // Long-poll duration (0-20, default: 20)
+  pollingWaitTimeMs: 0,    // Delay between polls in ms (default: 0)
+  shouldDeleteMessages: true, // Auto-delete on success (default: true)
+});
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `handler` | — | Async function to process a single message |
+| `batchHandler` | — | Async function to process a batch of messages |
+| `batchSize` | `1` / `10` | Messages per poll (1 for handler, 10 for batchHandler) |
+| `visibilityTimeout` | `30` | Seconds before unacknowledged message reappears |
+| `waitTimeSeconds` | `20` | Long-poll wait time in seconds |
+| `pollingWaitTimeMs` | `0` | Delay between polling cycles in ms |
+| `shouldDeleteMessages` | `true` | Auto-delete messages after successful processing |
+
+
+Provide either `handler` (single message) or `batchHandler` (batch), not both.
+
+
+## Batch Handler
+
+Process multiple messages at once for higher throughput:
+
+```typescript
+const worker = q.createWorker({
+  batchHandler: async (messages) => {
+    console.log(`Processing batch of ${messages.length} message(s)`);
+
+    for (const msg of messages) {
+      await processOrder(msg.body);
+    }
+
+    return messages; // Acknowledge all
+  },
+  batchSize: 10,
+});
+
+worker.start();
+```
+
+## Error Handling
+
+If the handler throws an error, the message is **not deleted** and becomes visible again after the visibility timeout:
+
+```typescript
+const worker = q.createWorker({
+  handler: async (message) => {
+    const order = message.body;
+
+    if (!order.id) {
+      throw new Error('Invalid order — missing ID');
+      // Message will be retried, eventually going to DLQ
+    }
+
+    await processOrder(order);
+    return message; // Auto-deleted on success
+  },
+});
+```
+
+## Worker Events
+
+Listen for lifecycle events:
+
+```typescript
+const worker = q.createWorker({ handler });
+
+worker.on('message_received', (msg) => {
+  console.log('Received:', msg.id);
+});
+
+worker.on('message_processed', (msg) => {
+  console.log('Processed:', msg.id);
+});
+
+worker.on('processing_error', (err, msg) => {
+  console.error('Failed:', msg.id, err.message);
+});
+
+worker.on('error', (err) => {
+  console.error('Worker error:', err);
+});
+
+worker.on('empty', () => {
+  console.log('Queue is empty');
+});
+
+worker.start();
+```
+
+## Graceful Shutdown
+
+Stop the worker gracefully to finish processing in-flight messages:
+
+```typescript
+const worker = q.createWorker({ handler });
+worker.start();
+
+// Handle shutdown signals
+process.on('SIGTERM', () => {
+  console.log('Shutting down worker...');
+  worker.stop(); // Finishes in-flight messages
+});
+
+process.on('SIGINT', () => {
+  worker.stop();
+});
+```
+
+## Multiple Workers
+
+Run multiple workers for different queues or parallel processing:
+
+```typescript
+const orderQueue = rinda.queue('ORDER_QUEUE_ID');
+const notificationQueue = rinda.queue('NOTIFICATION_QUEUE_ID');
+
+const orderWorker = orderQueue.createWorker({
+  handler: processOrder,
+  batchSize: 5,
+});
+
+const notificationWorker = notificationQueue.createWorker({
+  handler: sendNotification,
+  batchSize: 10,
+});
+
+orderWorker.start();
+notificationWorker.start();
+```
+
+## Best Practices
+
+1. **Use long-polling** — Set `waitTimeSeconds: 20` to minimize API calls and cost
+2. **Enable DLQ** — Configure dead-letter queues so failed messages don't block the queue
+3. **Handle signals** — Always implement graceful shutdown to avoid message loss
+4. **Keep handlers idempotent** — Messages may be delivered more than once (standard queues)
+5. **Set appropriate visibility timeouts** — Match to your expected processing time plus buffer
+6. **Return the message** — Always `return message` (or `return messages` for batch) to acknowledge successful processing
+
+---
+
+# FIFO Queues
+
+FIFO (First-In-First-Out) queues guarantee that messages are processed in the exact order they are sent, with exactly-once delivery semantics.
+
+## Creating a FIFO Queue
+
+
+  ### Node.js SDK
+
+```typescript
+const queue = await rinda.queues.create({
+  name: 'payment-events',
+  region: 'us-east-1',
+  isFifo: true,
+  dlqEnabled: true,
+  maxReceiveCount: 3,
+});
+
+console.log('FIFO queue:', queue.id, queue.isFifo); // true
+```
+
+  
+  ### REST API
+
+```bash
+curl -X POST https://api.rinda.dev/v1/queues \
+  -H "Authorization: Bearer $RINDA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "payment-events",
+    "region": "us-east-1",
+    "isFifo": true,
+    "dlqEnabled": true,
+    "maxReceiveCount": 3
+  }'
+```
+
+  
+
+
+## Message Groups
+
+Message groups allow parallel processing while maintaining order within each group. Use `groupId` to assign messages to a group:
+
+```typescript
+const q = rinda.queue(queue.id, { isFifo: true });
+
+// Messages for customer-123 are processed in order
+await q.send({
+  body: { action: 'charge', amount: 99.99 },
+  groupId: 'customer-123',
+  deduplicationId: 'charge-001',
+});
+
+await q.send({
+  body: { action: 'refund', amount: 99.99 },
+  groupId: 'customer-123',
+  deduplicationId: 'refund-001',
+});
+
+// Different group — processed independently and in parallel
+await q.send({
+  body: { action: 'charge', amount: 49.99 },
+  groupId: 'customer-456',
+  deduplicationId: 'charge-002',
+});
+```
+
+## Batch Send
+
+Send multiple FIFO messages at once. Every message must include `groupId` and `deduplicationId`:
+
+```typescript
+const q = rinda.queue(queue.id, { isFifo: true });
+
+const result = await q.sendBatch([
+  { body: { seq: 1 }, groupId: 'batch-group', deduplicationId: 'dedup-1' },
+  { body: { seq: 2 }, groupId: 'batch-group', deduplicationId: 'dedup-2' },
+  { body: { seq: 3 }, groupId: 'batch-group', deduplicationId: 'dedup-3' },
+]);
+
+console.log('Sent:', result.messageIds.length, 'messages');
+```
+
+## Receiving FIFO Messages
+
+Receive and process messages in order:
+
+```typescript
+const q = rinda.queue(queue.id);
+
+const messages = await q.receive({ maxMessages: 5 });
+for (const msg of messages) {
+  console.log('Body:', msg.body);
+  await msg.delete();
+}
+```
+
+## Deduplication
+
+The `deduplicationId` prevents duplicate messages within a 5-minute window:
+
+```typescript
+await q.send({
+  body: { orderId: '123' },
+  groupId: 'orders',
+  deduplicationId: 'order-123-created',
+});
+
+// This is a no-op — same deduplicationId within the dedup window
+await q.send({
+  body: { orderId: '123' },
+  groupId: 'orders',
+  deduplicationId: 'order-123-created',
+});
+```
+
+## SDK Validation
+
+When you create a queue handle with `{ isFifo: true }`, the SDK validates that `groupId` and `deduplicationId` are provided before sending:
+
+```typescript
+
+const q = rinda.queue(queue.id, { isFifo: true });
+
+try {
+  // Throws — missing groupId and deduplicationId
+  await q.send({ body: { test: true } });
+} catch (err) {
+  if (err instanceof RindaValidationError) {
+    console.error(err.message); // 'FIFO queues require "groupId"...'
+  }
+}
+```
+
+Batch validation reports the specific index:
+
+```typescript
+try {
+  await q.sendBatch([
+    { body: { a: 1 }, groupId: 'g1', deduplicationId: 'd1' },
+    { body: { b: 2 } }, // Missing groupId at index 1
+  ]);
+} catch (err) {
+  console.error(err.message); // '...Missing on message at index 1.'
+}
+```
+
+## FIFO Queue Stats
+
+```typescript
+const q = rinda.queue(queue.id);
+const stats = await q.stats();
+console.log('Messages:', stats.approximateMessageCount);
+```
+
+## When to Use FIFO
+
+| Use Case | Queue Type |
+|---|---|
+| Event processing where order matters | FIFO |
+| Financial transactions | FIFO |
+| State machine updates | FIFO |
+| Log ingestion | Standard |
+| Email notifications | Standard |
+| Thumbnail generation | Standard |
+
+## Limitations
+
+- FIFO queues have lower throughput than standard queues (300 messages/second per group)
+- Both `groupId` and `deduplicationId` are required for every message
+- Deduplication window is 5 minutes
+
+---
+
+# Dead Letter Queues
+
+A Dead Letter Queue (DLQ) captures messages that fail to be processed after a configurable number of attempts, preventing them from blocking the main queue.
+
+## Enabling DLQ
+
+Enable DLQ when creating a queue by setting `dlqEnabled` and `maxReceiveCount`:
+
+```typescript
+const queue = await rinda.queues.create({
+  name: 'order-events',
+  region: 'us-east-1',
+  dlqEnabled: true,
+  maxReceiveCount: 5, // Move to DLQ after 5 failed attempts
+});
+
+console.log('DLQ enabled:', queue.dlqEnabled); // true
+```
+
+This works for both standard and FIFO queues:
+
+```typescript
+const fifoQueue = await rinda.queues.create({
+  name: 'payment-events',
+  region: 'us-east-1',
+  isFifo: true,
+  dlqEnabled: true,
+  maxReceiveCount: 3,
+});
+```
+
+## How It Works
+
+```
+Message sent → Queue → Consumer receives message
+                              ↓
+                        Processing fails
+                              ↓
+                   Message becomes visible again
+                              ↓
+                   Retry (up to maxReceiveCount times)
+                              ↓
+                   Moved to Dead Letter Queue
+```
+
+1. A consumer receives a message and attempts to process it
+2. If the handler fails (throws an error), the message is not deleted
+3. After the visibility timeout, the message becomes visible again
+4. This repeats up to `maxReceiveCount` times
+5. After exceeding the retry limit, the message is moved to the DLQ
+
+## Worker with DLQ
+
+The `QueueWorker` integrates naturally with DLQ. Failed messages are automatically retried:
+
+```typescript
+const q = rinda.queue(queue.id);
+
+const worker = q.createWorker({
+  handler: async (message) => {
+    const order = message.body;
+
+    if (!order.id) {
+      throw new Error('Invalid order — missing ID');
+      // Message becomes visible again after visibility timeout
+      // After maxReceiveCount failures, moves to DLQ
+    }
+
+    await processOrder(order);
+    return message; // Acknowledge
+  },
+  visibilityTimeout: 30,
+});
+
+worker.start();
+```
+
+## Monitoring Dead Letters
+
+Use message introspection to view dead-lettered messages:
+
+```typescript
+const q = rinda.queue('QUEUE_ID');
+
+const result = await q.inspect({
+  status: 'DEAD_LETTERED',
+  limit: 50,
+});
+
+for (const msg of result.data) {
+  console.log(`Failed message: ${msg.providerMessageId}`);
+  console.log(`  Receive count: ${msg.receiveCount}`);
+  console.log(`  Error: ${msg.errorMessage}`);
+}
+```
+
+## Redriving
+
+Once you have fixed whatever made the messages fail, redrive them: they go
+back on the queue and are delivered again.
+
+```typescript
+const q = rinda.queue('QUEUE_ID');
+
+const result = await q.redrive();
+console.log(`Moved ${result.moved} messages back onto the queue`);
+```
+
+Redriven messages get a fresh set of attempts. Without that reset each one
+would arrive carrying the delivery count that dead-lettered it, and the first
+failure after redriving would send it straight back — one attempt instead of
+the queue's full allowance.
+
+### Draining a large backlog
+
+One call moves at most 500 messages and tells you whether there are more:
+
+```typescript
+let moved = 0;
+let result;
+
+do {
+  result = await q.redrive();
+  moved += result.moved;
+} while (result.hasMore);
+
+console.log(`Redrove ${moved} messages`);
+```
+
+The cap is there so a single request cannot stay open for as long as a large
+backlog takes to move.
+
+### Moving a few at a time
+
+Pass `maxMessages` to redrive part of the backlog — useful when you want to
+watch the first few succeed before releasing the rest:
+
+```typescript
+const result = await q.redrive({ maxMessages: 10 });
+```
+
+### What happens if a redrive fails partway
+
+A message is put back on the queue before it is removed from the dead-letter
+queue. If the second step fails, the message stays on the dead-letter queue
+and the next redrive moves it again — so a redrive can deliver a message
+twice, but cannot lose one.
+
+Handlers should be idempotent for this reason, as they should be for any queue
+delivery.
+
+Messages that could not be moved are reported separately and left where they
+were:
+
+```typescript
+const result = await q.redrive();
+
+if (result.failed > 0) {
+  console.warn(`${result.failed} could not be moved — they are still on the DLQ`);
+}
+```
+
+### Redriving from the dashboard
+
+A queue with a dead-letter queue has a **Redrive** button on its overview
+page, showing how many messages are waiting. It drains the whole backlog,
+making as many calls as that takes.
+
+## Best Practices
+
+1. **Always enable DLQ for production queues** — prevents poison messages from blocking processing
+2. **Set appropriate retry counts** — 3-5 retries is typical for most workloads
+3. **Monitor your DLQ** — set up alerts when messages arrive in the DLQ
+4. **Investigate root causes** — use message introspection to understand why messages failed
+5. **Redrive when fixed** — once the issue is resolved, call `redrive()` to put the messages back
+6. **Fix before you redrive** — a message that fails again returns to the DLQ, so redriving into an unfixed bug just moves the backlog back and forth
+
+---
+
+# Environments
+
+Rinda environments provide isolated contexts for your queues and storage, ensuring safe separation between development, staging, and production.
+
+## Default Environments
+
+Every project comes with three environments:
+
+| Environment | API Key Prefix | Purpose |
+|---|---|---|
+| Development | `rk_dev_...` | Local development and testing |
+| Staging | `rk_stg_...` | Pre-production validation |
+| Production | `rk_prod_...` | Live traffic |
+
+## How Isolation Works
+
+- Each environment has its own set of **queues** and **storage objects**
+- API keys are scoped to a single environment
+- A production API key **cannot** access staging or development queues
+- Queue names can be reused across environments (e.g., `order-events` in both dev and prod)
+
+## Using Environments
+
+Your code doesn't need to know which environment it's running in — the API key determines the environment:
+
+```typescript
+
+// In development: uses dev queues
+// In production: uses prod queues
+// Determined entirely by the API key
+const rinda = new Rinda({
+  apiKey: process.env.RINDA_API_KEY,
+});
+```
+
+## Environment Variables Setup
+
+```bash
+# .env.development
+RINDA_API_KEY=rk_dev_abc123
+
+# .env.staging
+RINDA_API_KEY=rk_stg_def456
+
+# .env.production
+RINDA_API_KEY=rk_prod_ghi789
+```
+
+## Best Practices
+
+1. **Never use production keys locally** — always use development keys for local work
+2. **Use separate API keys per service** — easier to rotate and audit
+3. **Match infrastructure** — keep queue configurations similar across environments
+4. **Test in staging first** — validate changes before deploying to production
+
+---
+
+# Message Introspection
+
+Message introspection lets you view the full lifecycle of messages flowing through your queues — from sent to processed, failed, or dead-lettered. It is invaluable for debugging and monitoring.
+
+## Inspecting Messages
+
+Filter and paginate messages with `inspect`:
+
+```typescript
+const q = rinda.queue('QUEUE_ID');
+
+const result = await q.inspect({
+  status: 'FAILED',
+  limit: 50,
+});
+
+console.log(`Found ${result.data.length} failed messages`);
+for (const msg of result.data) {
+  console.log(`${msg.providerMessageId}: ${msg.errorMessage}`);
+}
+
+// Pagination
+if (result.pagination.hasMore) {
+  const nextPage = await q.inspect({
+    status: 'FAILED',
+    cursor: result.pagination.nextCursor,
+  });
+}
+```
+
+### Filter Options
+
+| Filter | Description |
+|---|---|
+| `status` | Filter by lifecycle status |
+| `groupId` | Filter by FIFO message group |
+| `deduplicationId` | Filter by deduplication ID |
+| `search` | Text search in message body |
+| `cursor` | Pagination cursor from previous response |
+| `limit` | Max results (default: 50, max: 100) |
+
+## Message Statuses
+
+| Status | Description |
+|---|---|
+| `QUEUED` | Message is in the queue, waiting to be received |
+| `PROCESSING` | Message has been received and is being processed |
+| `PROCESSED` | Message was successfully processed and deleted |
+| `FAILED` | Message processing failed (will be retried) |
+| `DEAD_LETTERED` | Message exceeded max retries and was moved to DLQ |
+| `DELETED` | Message was explicitly deleted |
+| `EXPIRED` | Message exceeded retention period |
+| `DEDUPLICATED` | Duplicate message was suppressed |
+
+## Full-Text Search
+
+Search messages by body content using PostgreSQL full-text search:
+
+```typescript
+const result = await q.search('order-123', 20);
+
+console.log(`Found ${result.data.length} matching messages`);
+for (const msg of result.data) {
+  console.log(`${msg.providerMessageId}: ${msg.status}`);
+}
+```
+
+## Message Groups (FIFO)
+
+View message groups and their aggregated statistics for FIFO queues:
+
+```typescript
+const result = await q.groups(10);
+
+for (const group of result.data) {
+  console.log(`Group: ${group.groupId}`);
+  console.log(`  Total: ${group.messageCount}`);
+  console.log(`  Queued: ${group.queued}`);
+  console.log(`  Processing: ${group.processing}`);
+  console.log(`  Processed: ${group.processed}`);
+  console.log(`  Failed: ${group.failed}`);
+  console.log(`  Dead-lettered: ${group.deadLettered}`);
+}
+```
+
+## Statistics
+
+Get a high-level breakdown of message statuses:
+
+```typescript
+const result = await q.breakdown();
+
+console.log('Message breakdown:');
+for (const { status, count } of result.data.byStatus) {
+  console.log(`  ${status}: ${count}`);
+}
+console.log('Total deduplicated:', result.data.totalDeduplicated);
+```
+
+## Use Cases
+
+- **Debugging** — Find out why a specific message failed
+- **Monitoring** — Track message throughput and failure rates
+- **Auditing** — Full message lifecycle for compliance
+- **Alerting** — Detect message processing issues early
+
+---
+
+# API Endpoints Reference
+
+Base URL: https://api.rinda.dev
+Authentication: Bearer token (API key starting with rk_)
+
+## GET /health
+**Health check (liveness)**
+
+## GET /health/ready
+**Readiness check (database connectivity)**
+
+## GET /v1/account
+**Get current user and account**
+
+## GET /v1/account/retention
+**Get the archive retention window and the options for this plan**
+
+## PATCH /v1/account/retention
+**Set how long archived message bodies are kept**
+
+## GET /v1/account/export
+**Download everything in this account as newline-delimited JSON**
+
+## POST /v1/account/delete
+**Delete this account, its queues, its storage, and its keys**
+
+## PATCH /v1/account/profile
+**Update user profile (name)**
+
+## POST /v1/api-keys
+**Create API key (returns full key once)**
+
+## GET /v1/api-keys
+**List API keys (prefix only)**
+
+## GET /v1/api-keys/scopes
+**List the scopes and presets a key can be given**
+
+## POST /v1/api-keys/{keyId}/rotate
+**Rotate API key — issues a replacement and expires this one after an overlap window**
+
+## DELETE /v1/api-keys/{keyId}
+**Revoke API key**
+
+## POST /v1/projects
+**Create a project**
+
+## GET /v1/projects
+**List projects**
+
+## GET /v1/projects/{projectId}
+**Get project details**
+
+## DELETE /v1/projects/{projectId}
+**Delete project**
+
+## GET /v1/project
+**The project this credential belongs to, with its environments**
+
+## GET /v1/project/environments
+**Environments in this credential’s project**
+
+## POST /v1/projects/{projectId}/environments
+**Create an environment**
+
+## GET /v1/projects/{projectId}/environments
+**List environments**
+
+## GET /v1/projects/{projectId}/environments/{envId}
+**Get environment details**
+
+## DELETE /v1/projects/{projectId}/environments/{envId}
+**Delete environment**
+
+## GET /v1/projects/{projectId}/environments/{envId}/stats
+**Get environment statistics**
+
+## POST /v1/queues
+**Create a queue**
+
+## GET /v1/queues
+**List queues**
+
+## GET /v1/queues/{queueId}
+**Get queue details**
+
+## PATCH /v1/queues/{queueId}
+**Update queue config**
+
+## DELETE /v1/queues/{queueId}
+**Delete queue**
+
+## GET /v1/queues/{queueId}/stats
+**Get queue statistics**
+
+## POST /v1/queues/{queueId}/messages
+**Send message(s)**
+
+## GET /v1/queues/{queueId}/messages
+**Receive messages (long-poll)**
+
+## POST /v1/queues/{queueId}/messages/batch
+**Send a batch of messages (max 10)**
+
+## DELETE /v1/queues/{queueId}/messages/batch
+**Batch delete messages by IDs**
+
+## DELETE /v1/queues/{queueId}/messages/{messageId}
+**Delete message by ID**
+
+## PATCH /v1/queues/{queueId}/messages/{messageId}/visibility
+**Extend message visibility timeout**
+
+## PATCH /v1/queues/{queueId}/messages/{messageId}/lifecycle
+**Update message lifecycle status (called by SDK workers)**
+
+## POST /v1/queues/{queueId}/messages/lifecycle/batch
+**Batch update message lifecycle statuses**
+
+## POST /v1/queues/{queueId}/messages/redrive
+**Move messages from this queue's dead-letter queue back onto it**
+
+## GET /v1/queues/{queueId}/messages/introspect
+**List and filter messages for introspection**
+
+## GET /v1/queues/{queueId}/messages/introspect/search
+**Full-text search messages by body content**
+
+## GET /v1/queues/{queueId}/messages/introspect/groups
+**List message groups with aggregated stats (FIFO queues)**
+
+## GET /v1/queues/{queueId}/messages/introspect/stats
+**Get message status breakdown and deduplication stats**
+
+## GET /v1/storage
+**List stored message bodies in this project**
+
+## GET /v1/storage/browse
+**Browse stored bodies by key prefix**
+
+## GET /v1/storage/{objectId}
+**Get a download URL for one stored body**
+
+## GET /v1/storage/{objectId}/body
+**Download one stored body, decrypted**
+Returns the bytes themselves rather than a link, because a link to an encrypted object would be a link to ciphertext. Bounded by the largest body Rinda accepts, so every object it wrote is readable here.
+
+## GET /v1/queues/{queueId}/storage
+**List stored bodies for one queue**
+
+## GET /v1/queues/{queueId}/storage/{objectId}
+**Get one stored body for a queue**
+
+## GET /v1/queues/{queueId}/storage/{objectId}/body
+**Download one stored body for a queue, decrypted**
+
+## POST /v1/billing/checkout
+**Create a Stripe checkout session**
+
+## POST /v1/billing/portal
+**Create a Stripe customer portal session**
+
+## GET /v1/billing/subscription
+**Get current subscription**
+
+## POST /v1/billing/cancel
+**Cancel subscription at period end**
+
+## POST /v1/billing/reactivate
+**Reactivate pending cancellation**
+
+## POST /v1/billing/sync
+**Sync subscription state from Stripe**
+
+## GET /v1/billing/usage
+**Get account usage summary**
+
+## GET /v1/billing/estimate
+**What this month's usage costs so far, itemised**
+
+## GET /v1/billing/plans
+**What each plan costs and allows, read from Stripe**
+
+## POST /v1/billing/webhooks/stripe
+**Stripe webhook handler (signature-verified)**
+
+## GET /v1/pricing
+**What each plan costs, in the visitor’s currency**
+
+## POST /v1/organizations
+**Create an organization**
+
+## GET /v1/organizations
+**List organizations**
+
+## GET /v1/organizations/{orgId}
+**Get organization details**
+
+## PATCH /v1/organizations/{orgId}
+**Update organization (rename)**
+
+## POST /v1/organizations/{orgId}/invites
+**Invite a member**
+
+## GET /v1/organizations/invites/mine
+**Invitations addressed to the signed-in user**
+
+## POST /v1/organizations/invites/{inviteId}/accept
+**Accept an invite**
+
+## DELETE /v1/organizations/{orgId}/invites/{inviteId}
+**Revoke a pending invite**
+
+## DELETE /v1/organizations/{orgId}/members/{memberId}
+**Remove a member**
+
+## PATCH /v1/organizations/{orgId}/members/{memberId}/role
+**Update member role**
+
+## GET /v1/onboarding/status
+**Get onboarding checklist status**
+
+## POST /v1/projects/{projectId}/compat-credentials
+**Issue a credential for the AWS SDK. The secret is returned once.**
+
+## GET /v1/projects/{projectId}/compat-credentials
+**List credentials. Secrets are never returned.**
+
+## DELETE /v1/projects/{projectId}/compat-credentials/{credentialId}
+**Revoke a credential immediately**

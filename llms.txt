@@ -1,0 +1,40 @@
+# Rinda Documentation
+
+> Rinda is a managed Queue-as-a-Service platform. It wraps cloud queue services (AWS SQS, Azure Service Bus) and provides developers with an easy-to-use SDK, REST API, and web dashboard.
+
+## Docs
+
+- [Quickstart](/docs/getting-started/quickstart): Get started in 5 minutes — install the SDK, create a queue, send and receive messages
+- [Authentication](/docs/getting-started/authentication): API key management, environment scoping, and security best practices
+- [Core Concepts](/docs/getting-started/concepts): Projects, environments, queues, messages, storage, and how they relate
+
+## Guides
+
+- [Queues](/docs/guides/queues): Create, configure, and manage standard and FIFO message queues
+- [Messages](/docs/guides/messages): Send, receive, batch, delete, and manage message visibility
+- [Storage](/docs/guides/storage): S3-compatible object storage with presigned URLs, versioning, and tagging
+- [Workers](/docs/guides/workers): Reliable message consumers with auto-polling and graceful shutdown
+- [FIFO Queues](/docs/guides/fifo-queues): Strict ordering, message groups, and deduplication
+- [Dead Letter Queues](/docs/guides/dead-letter-queues): Handle failed messages with configurable retry policies
+- [Environments](/docs/guides/environments): Isolated dev/staging/production contexts
+- [Message Introspection](/docs/guides/message-introspection): Full message lifecycle tracking for debugging and monitoring
+
+## API Reference
+
+- [API Overview](/docs/api-reference/rinda-api): REST API with Bearer token auth, base URL, and rate limits
+- [Queues API](/docs/api-reference/queues): POST/GET/PATCH/DELETE /v1/queues
+- [Messages API](/docs/api-reference/messages): Send, receive, delete, batch, introspect messages
+- [Storage API](/docs/api-reference/storage): Upload, download, browse, copy, version objects
+
+## SDK Reference
+
+- [SDK Overview](/docs/sdk-reference): @rindahq/sdk — TypeScript/Node.js SDK
+- [Rinda Client](/docs/sdk-reference/classes/Rinda): Main entry point
+- [QueueClient](/docs/sdk-reference/classes/QueueClient): Queue CRUD operations
+- [QueueHandle](/docs/sdk-reference/classes/QueueHandle): Message operations on a specific queue
+- [StorageClient](/docs/sdk-reference/classes/StorageClient): S3-compatible storage operations
+- [QueueWorker](/docs/sdk-reference/classes/QueueWorker): Reliable message consumer with polling
+
+## Optional
+
+- [Full documentation as plain text](llms-full.txt)

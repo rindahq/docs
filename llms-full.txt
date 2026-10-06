@@ -17,9 +17,36 @@ Get up and running with Rinda in under 5 minutes. By the end of this guide you'l
 
 ## 1. Install the SDK
 
+
+  ### npm
+
 ```bash
 npm install @rindahq/sdk
 ```
+
+  
+  ### pnpm
+
+```bash
+pnpm add @rindahq/sdk
+```
+
+  
+  ### Yarn
+
+```bash
+yarn add @rindahq/sdk
+```
+
+  
+  ### Bun
+
+```bash
+bun add @rindahq/sdk
+```
+
+  
+
 
  Looking for another language?
 We currently offer an official SDK for Node.js/TypeScript. For Python, PHP, C#, Go, and other languages, use the [REST API](/docs/api-reference/rinda-api) directly with any HTTP client — it works with any language that can make HTTP requests.
